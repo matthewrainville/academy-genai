@@ -48,7 +48,7 @@ _CLASS_ALREADY_EXISTS_TASK_ID = "class_already_exists"
     doc_md=__doc__,
     description="Ingest knowledge into the vector database for RAG.",
 )
-def my_first_rag_dag_solution():
+def rag_dag():
 
     @task.branch(retries=4)
     def check_class(
@@ -265,4 +265,4 @@ def my_first_rag_dag_solution():
     )
 
 
-my_first_rag_dag_solution()
+rag_dag()
