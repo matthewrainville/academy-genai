@@ -1,7 +1,7 @@
 """
 ## Simple RAG DAG to ingest new knowledge data into a vector database
 
-This DAG ingests text data from markdown files, chunks the text, and then ingests 
+This DAG ingests text data from markdown and PDFfiles, chunks the text, and then ingests 
 the chunks into a Weaviate vector database.
 """
 
