@@ -10,10 +10,14 @@ from airflow.models.baseoperator import chain
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.weaviate.hooks.weaviate import WeaviateHook
 from airflow.providers.weaviate.operators.weaviate import WeaviateIngestOperator
+from airflow.operators.python import get_current_context
 from pendulum import datetime, duration
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
 import os
 import logging
 import pandas as pd
+from pypdf import PdfReader
 
 t_log = logging.getLogger("airflow.task")
 
@@ -66,9 +70,10 @@ def my_first_rag_dag_solution():
 
         # connect to Weaviate using the Airflow connection `conn_id`
         hook = WeaviateHook(conn_id)
+        client = hook.get_conn()
 
         # retrieve the existing schema from the Weaviate instance
-        schema = hook.get_schema()
+        schema = client.schema.get()
         existing_classes = {cls["class"]: cls for cls in schema.get("classes", [])}
 
         # if the target class does not exist yet, we will need to create it
@@ -109,6 +114,15 @@ def my_first_rag_dag_solution():
                 None,
             )
             class_obj["vectorizer"] = vectorizer
+            # Add OpenAI configuration
+            class_obj["moduleConfig"] = {
+                "text2vec-openai": {
+                    "model": "text-embedding-3-small",
+                    # "modelVersion": "3",
+                    # "type": "text",
+                    "baseURL": "https://api.openai.com/v1"
+                }
+            }
 
         weaviate_hook.create_class(class_obj)
 
@@ -128,12 +142,18 @@ def my_first_rag_dag_solution():
     @task
     def fetch_ingestion_folders_local_paths(ingestion_folders_local_path):
         # get all the folders in the given location
-        folders = os.listdir(ingestion_folders_local_path)
+        t_log.info(f"Ingestion folders local path: {ingestion_folders_local_path}")
+        folders = [f for f in os.listdir(ingestion_folders_local_path) 
+                  if os.path.isdir(os.path.join(ingestion_folders_local_path, f))]
+        t_log.info(f"Folders: {folders}")
 
-        # return the full path of the folders
-        return [
+        # return the full path of the folders, including the root folder
+        folder_paths = [ingestion_folders_local_path]  # Add root folder first
+        folder_paths.extend([
             os.path.join(ingestion_folders_local_path, folder) for folder in folders
-        ]
+        ])
+        return folder_paths
+        t_log.info(f"Folder paths: {folder_paths}")
 
     fetch_ingestion_folders_local_paths_obj = fetch_ingestion_folders_local_paths(
         ingestion_folders_local_path=_INGESTION_FOLDERS_LOCAL_PATHS
@@ -144,16 +164,19 @@ def my_first_rag_dag_solution():
     )
     def extract_document_text(ingestion_folder_local_path):
         """
-        Extract information from markdown files in a folder.
+        Extract information from markdown and PDF files in a folder.
         Args:
-            folder_path (str): Path to the folder containing markdown files.
+            folder_path (str): Path to the folder containing markdown and PDF files.
         Returns:
             pd.DataFrame: A list of dictionaries containing the extracted information.
         """
+        # Get all markdown and PDF files
         files = [
-            f for f in os.listdir(ingestion_folder_local_path) if f.endswith(".md")
+            f for f in os.listdir(ingestion_folder_local_path) 
+            if f.endswith((".md", ".pdf"))
         ]
-
+        t_log.info(f"Number of files: {len(files)}")
+         
         titles = []
         texts = []
 
@@ -161,9 +184,19 @@ def my_first_rag_dag_solution():
             file_path = os.path.join(ingestion_folder_local_path, file)
             titles.append(file.split(".")[0])
 
-            with open(file_path, "r", encoding="utf-8") as f:
-                texts.append(f.read())
+            if file.endswith(".md"):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    texts.append(f.read())
+            elif file.endswith(".pdf"):
+                # Extract text from PDF
+                reader = PdfReader(file_path)
+                pdf_text = ""
+                for page in reader.pages:
+                    pdf_text += page.extract_text() + "\n"
+                texts.append(pdf_text)
 
+        t_log.info(f"Texts: {texts}")
+        
         document_df = pd.DataFrame(
             {
                 "folder_path": ingestion_folder_local_path,
@@ -175,8 +208,6 @@ def my_first_rag_dag_solution():
         t_log.info(f"Number of records: {document_df.shape[0]}")
 
         # get the current context and define the custom map index variable
-        from airflow.operators.python import get_current_context
-
         context = get_current_context()
         context["my_custom_map_index"] = (
             f"Extracted files from: {ingestion_folder_local_path}."
@@ -198,9 +229,6 @@ def my_first_rag_dag_solution():
             pd.DataFrame: The DataFrame with the text chunked.
         """
 
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
-        from langchain.schema import Document
-
         splitter = RecursiveCharacterTextSplitter()
 
         df["chunks"] = df["text"].apply(
@@ -214,8 +242,6 @@ def my_first_rag_dag_solution():
         df.reset_index(inplace=True, drop=True)
 
         # get the current context and define the custom map index variable
-        from airflow.operators.python import get_current_context
-
         context = get_current_context()
 
         context["my_custom_map_index"] = (
