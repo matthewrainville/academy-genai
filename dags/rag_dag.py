@@ -142,18 +142,19 @@ def rag_dag():
     @task
     def fetch_ingestion_folders_local_paths(ingestion_folders_local_path):
         # get all the folders in the given location
-        t_log.info(f"Ingestion folders local path: {ingestion_folders_local_path}")
         folders = [f for f in os.listdir(ingestion_folders_local_path) 
                   if os.path.isdir(os.path.join(ingestion_folders_local_path, f))]
-        t_log.info(f"Folders: {folders}")
 
         # return the full path of the folders, including the root folder
         folder_paths = [ingestion_folders_local_path]  # Add root folder first
         folder_paths.extend([
             os.path.join(ingestion_folders_local_path, folder) for folder in folders
         ])
+        
+        t_log.info(f"Source file folder paths: {folder_paths}")
+        
         return folder_paths
-        t_log.info(f"Folder paths: {folder_paths}")
+        
 
     fetch_ingestion_folders_local_paths_obj = fetch_ingestion_folders_local_paths(
         ingestion_folders_local_path=_INGESTION_FOLDERS_LOCAL_PATHS
@@ -175,13 +176,16 @@ def rag_dag():
             f for f in os.listdir(ingestion_folder_local_path) 
             if f.endswith((".md", ".pdf"))
         ]
-        t_log.info(f"Number of files: {len(files)}")
+        t_log.info(f"Number of source files: {len(files)}")
+        t_log.info(f"Source files: {files}")
          
         titles = []
         texts = []
 
         for file in files:
             file_path = os.path.join(ingestion_folder_local_path, file)
+            t_log.info(f"Source file path: {file_path}")
+
             titles.append(file.split(".")[0])
 
             if file.endswith(".md"):
@@ -194,8 +198,6 @@ def rag_dag():
                 for page in reader.pages:
                     pdf_text += page.extract_text() + "\n"
                 texts.append(pdf_text)
-
-        t_log.info(f"Texts: {texts}")
         
         document_df = pd.DataFrame(
             {
